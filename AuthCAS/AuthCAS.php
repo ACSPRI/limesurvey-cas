@@ -1,8 +1,8 @@
 <?php
 
-class AuthCAS extends AuthPluginBase
-{
+class AuthCAS extends AuthPluginBase {
 
+    private $userDetails = array();
     protected $storage = 'DbStorage';
     static protected $description = 'CAS authentication plugin';
     static protected $name = 'CAS';
@@ -15,151 +15,48 @@ class AuthCAS extends AuthPluginBase
         'casAuthPort' => array(
             'type' => 'int',
             'label' => 'CAS Server listening Port',
-            'default' => 8443,
+            'default' => 443,
         ),
         'casAuthUri' => array(
             'type' => 'string',
             'label' => 'Relative uri from CAS Server to cas workingdirectory',
             'default' => '/cas',
         ),
-        // FIXME: update
-        'casAllowedServices' => array(
+        'casAttribute' => array(
             'type' => 'string',
-            'label' => 'Optional CAS allowed services (Do not check allowed services if omitted)',
+            'label' => "A CASAttribute to validate against(if blank don't authenticate)",
+            'default' => '',
+        ),
+        'casLoginFailMessage' => array(
+            'type' => 'string',
+            'label' => "Error message to be displayed when authentication fails due to casAttribute value",
+            'default' => 'Authentication failed.',
         ),
         'autoCreate' => array(
             'type' => 'select',
-            'label' => 'Enable automated creation of user from LDAP ?',
+            'label' => 'Enable automated creation of user from CAS ?',
             'options' => array("0" => "No, don't create user automatically", "1" => "User creation on the first connection"),
             'default' => '0',
-            'submitonchange' => true
+            'submitonchange' => false
         ),
-        'server' => array(
-            'type' => 'string',
-            'label' => 'Ldap server e.g. ldap://ldap.mydomain.com or ldaps://ldap.mydomain.com'
-        ),
-        'ldapport' => array(
-            'type' => 'string',
-            'label' => 'Port number (default when omitted is 389)'
-        ),
-        'ldapversion' => array(
-            'type' => 'select',
-            'label' => 'LDAP version',
-            'options' => array('2' => 'LDAPv2', '3' => 'LDAPv3'),
-            'default' => '2',
-            'submitonchange' => true
-        ),
-        'ldapoptreferrals' => array(
-            'type' => 'boolean',
-            'label' => 'Select true if referrals must be followed (use false for ActiveDirectory)',
-            'default' => '0'
-        ),
-        'ldaptls' => array(
-            'type' => 'boolean',
-            'label' => 'Check to enable Start-TLS encryption When using LDAPv3',
-            'default' => '0'
-        ),
-        'searchuserattribute' => array(
-            'type' => 'string',
-            'label' => 'Attribute to compare to the given login can be uid, cn, mail, ...'
-        ),
-        'usersearchbase' => array(
-            'type' => 'string',
-            'label' => 'Base DN for the user search operation'
-        ),
-        'extrauserfilter' => array(
-            'type' => 'string',
-            'label' => 'Optional extra LDAP filter to be ANDed to the basic (searchuserattribute=username) filter. Don\'t forget the outmost enclosing parentheses'
-        ),
-        // FIXME: update
-        'fullnameattr' => array(
-            'type' => 'string',
-            'label' => 'Optional full name attribute (default when omitted is displayName)',
-            'default' => 'displayName'
-        ),
-        'binddn' => array(
-            'type' => 'string',
-            'label' => 'Optional DN of the LDAP account used to search for the end-user\'s DN. An anonymous bind is performed if empty.'
-        ),
-        'bindpwd' => array(
-            'type' => 'string',
-            'label' => 'Password of the LDAP account used to search for the end-user\'s DN if previoulsy set.'
-        )
     );
 
-    public function __construct(PluginManager $manager, $id)
-    {
+    public function __construct(\PluginManager $manager, $id) {
         parent::__construct($manager, $id);
 
-        /**
-         * Here you should handle subscribing to the events your plugin will handle
-         */
         $this->subscribe('beforeLogin');
         $this->subscribe('newUserSession');
         $this->subscribe('beforeLogout');
     }
 
-    /**
-     * Modified getPluginSettings since we have a select box that autosubmits
-     * and we only want to show the relevant options.
-     *
-     * @param boolean $getValues
-     * @return array
-     */
-    public function getPluginSettings($getValues = true)
-    {
-        $aPluginSettings = parent::getPluginSettings($getValues);
-        if ($getValues)
-        {
-            $ldapver = $aPluginSettings['ldapversion']['current'];
-            $autoCreate = $aPluginSettings['autoCreate']['current'];
-
-            // If it is a post request, it could be an autosubmit so read posted
-            // value over the saved value
-            if (App()->request->isPostRequest)
-            {
-                $ldapver = App()->request->getPost('ldapversion', $ldapver);
-                $aPluginSettings['ldapversion']['current'] = $ldapver;
-                $autoCreate = App()->request->getPost('autoCreate', $autoCreate);
-                $aPluginSettings['autoCreate']['current'] = $autoCreate;
-            }
-
-            if ($autoCreate == 0)
-            {
-                // Don't create user. Hide unneeded ldap settings
-                unset($aPluginSettings['server']);
-                unset($aPluginSettings['ldapport']);
-                unset($aPluginSettings['ldapversion']);
-                unset($aPluginSettings['ldapoptreferrals']);
-                unset($aPluginSettings['ldaptls']);
-                unset($aPluginSettings['searchuserattribute']);
-                unset($aPluginSettings['usersearchbase']);
-                unset($aPluginSettings['extrauserfilter']);
-                unset($aPluginSettings['fullnameattr']);
-                unset($aPluginSettings['binddn']);
-                unset($aPluginSettings['bindpwd']);
-            } else
-            {
-                if ($ldapver == '2')
-                {
-                    unset($aPluginSettings['ldaptls']);
-                }
-            }
-        }
-
-        return $aPluginSettings;
-    }
-
-    public function beforeLogin()
-    {
+    public function beforeLogin() {
         // configure phpCAS
         $cas_host = $this->get('casAuthServer');
         $cas_context = $this->get('casAuthUri');
         $cas_port = (int) $this->get('casAuthPort');
-        $cas_allowedservices = $this->get('casAllowedServices');
 
         // import phpCAS lib
-        $basedir=dirname(__FILE__);
+        $basedir = dirname(__FILE__);
         Yii::setPathOfAlias('myplugin', $basedir);
         Yii::import('myplugin.third_party.CAS.*');
         require_once('CAS.php');
@@ -170,204 +67,117 @@ class AuthCAS extends AuthPluginBase
         //force CAS authentication
         phpCAS::forceAuthentication();
 
-        // FIXME
-	// check CAS attributes allowedservices
-        if (!empty($cas_allowedservices))
-        {
-            $cas_attrs=phpCAS::getAttributes();
-            if (!in_array($cas_allowedservices,preg_split('/, |\[|\]/',$cas_attrs['allowedservices'])))
-            {
-                #$this->setAuthFailure(1, gT('You\'re not allowed to access to this application.'));
-                throw new CHttpException(401, 'You\'re not allowed to acces to this application');
-                return;
-	    }
-        }
-
         $this->setUsername(phpCAS::getUser());
         $oUser = $this->api->getUserByName($this->getUserName());
-        if ($oUser || $this->get('autoCreate'))
-        {
+
+
+        $casAttr = trim($this->get('casAttribute'));
+        $casAttrValue = '';
+
+        if (strlen($casAttr) > 0) {
+
+            if (isset(phpCAS::getAttributes()[$this->get('casAttribute')])) {
+                $casAttrValue = trim(phpCAS::getAttributes()[$this->get('casAttribute')]);
+
+                if (strlen($casAttrValue) == 0) {
+                    throw new CHttpException(401, $this->get('casLoginFailMessage'));
+                } else {
+                    $casAttrValue = '-' . $casAttrValue;
+                }
+            } else {
+                throw new CHttpException(401, 'Cas Attribute not found.');
+            }
+        }
+
+        $this->userDetails['email'] = phpCAS::getAttributes()['mail'];
+        $this->userDetails['full_name'] = phpCAS::getUser() . $casAttrValue;
+        $this->userDetails['username'] = phpCAS::getUser();
+
+
+        if ($oUser || $this->get('autoCreate')) {
             // User authenticated and found. Cas become the authentication system
             $this->getEvent()->set('default', get_class($this));
             $this->setAuthPlugin(); // This plugin handles authentication, halt further execution of auth plugins
-        } elseif ($this->get('is_default', null, null))
-        {
+        } elseif ($this->get('is_default', null, null)) {
             // Fall back to another authentication mecanism
             throw new CHttpException(401, 'Wrong credentials for LimeSurvey administration.');
         }
     }
 
-    public function newUserSession()
-    {
+    public function newUserSession() {
         // Do nothing if this user is not AuthCAS type
         $identity = $this->getEvent()->get('identity');
-        if ($identity->plugin != 'AuthCAS')
-        {
+
+        if ($identity->plugin != 'AuthCAS') {
             return;
         }
 
         $sUser = $this->getUserName();
 
         $oUser = $this->api->getUserByName($sUser);
-        if ((boolean) $this->get('autoCreate') === true)
-        {
-            // auto-create
-            // Get configuration settings:
-            $ldapserver = $this->get('server');
-            $ldapport = $this->get('ldapport');
-            $ldapver = $this->get('ldapversion');
-            $ldaptls = $this->get('ldaptls');
-            $ldapoptreferrals = $this->get('ldapoptreferrals');
-            $searchuserattribute = $this->get('searchuserattribute');
-            $extrauserfilter = $this->get('extrauserfilter');
-            $usersearchbase = $this->get('usersearchbase');
-            $binddn = $this->get('binddn');
-            $bindpwd = $this->get('bindpwd');
-            // FIXME
-            // choose attributes use in ldap for user's full name
-            $fullname = $this->get('fullnameattr');
-            if (empty($fullname))
-            {
-                    $fullname = 'displayName';
-            }
+        if ((boolean) $this->get('autoCreate') === true) {
 
-            $username = $sUser;
+            if (is_null($oUser)) {
 
-            if (empty($ldapport))
-            {
-                $ldapport = 389;
-            }
+                $oUser = new User;
+                $oUser->users_name = $this->userDetails['username'];
+                $oUser->password = hash('sha256', createPassword());
+                $oUser->full_name = $this->userDetails['full_name'];
+                $oUser->parent_id = 1;
+                $oUser->email = $this->userDetails['email'];
 
-            // Try to connect
-            $ldapconn = ldap_connect($ldapserver, (int) $ldapport);
-            if (false == $ldapconn)
-            {
-                $this->setAuthFailure(1, gT('Could not connect to LDAP server.'));
-                return;
-            }
-
-            // using LDAP version
-            if ($ldapver === null)
-            {
-                // If the version hasn't been set, default = 2
-                $ldapver = 2;
-            }
-            ldap_set_option($ldapconn, LDAP_OPT_PROTOCOL_VERSION, $ldapver);
-            ldap_set_option($ldapconn, LDAP_OPT_REFERRALS, $ldapoptreferrals);
-
-            if (!empty($ldaptls) && $ldaptls == '1' && $ldapver == 3 && preg_match("/^ldaps:\/\//", $ldapserver) == 0)
-            {
-                // starting TLS secure layer
-                if (!ldap_start_tls($ldapconn))
-                {
-                    $this->setAuthFailure(100, ldap_error($ldapconn));
-                    ldap_close($ldapconn); // all done? close connection
+                if ($oUser->save()) {
+                    if ($this->api->getConfigKey('auth_cas_autocreate_permissions')) {
+                        $permission = new Permission;
+                        $permission->setPermissions($oUser->uid, 0, 'global', $this->api->getConfigKey('auth_cas_autocreate_permissions'), true);
+                    }
+                    // read again user from newly created entry
+                    $this->setAuthSuccess($oUser);
+                    return;
+                } else {
+                    $this->setAuthFailure(self::ERROR_USERNAME_INVALID);
+                    throw new CHttpException(401, 'User not saved : ' . $this->userDetails['email'] . " / " . $this->userDetails['full_name']);
                     return;
                 }
-            }
+            } else {
 
-            // We first do a LDAP search from the username given
-            // to find the userDN and then we procced to the bind operation
-            if (empty($binddn))
-            {
-                // There is no account defined to do the LDAP search,
-                // let's use anonymous bind instead
-                $ldapbindsearch = @ldap_bind($ldapconn);
-            } else
-            {
-                // An account is defined to do the LDAP search, let's use it
-                $ldapbindsearch = @ldap_bind($ldapconn, $binddn, $bindpwd);
-            }
-            if (!$ldapbindsearch)
-            {
-                $this->setAuthFailure(100, ldap_error($ldapconn));
-                ldap_close($ldapconn); // all done? close connection
-                return;
-            }
-            // Now prepare the search filter
-            if ($extrauserfilter != "")
-            {
-                $usersearchfilter = "(&($searchuserattribute=$username)$extrauserfilter)";
-            } else
-            {
-                $usersearchfilter = "($searchuserattribute=$username)";
-            }
+                $isChanged = FALSE;
 
-            // Search for the user
-            $dnsearchres = ldap_search($ldapconn, $usersearchbase,
-            $usersearchfilter, array($searchuserattribute, $fullname, "mail"));
-            $rescount = ldap_count_entries($ldapconn, $dnsearchres);
-            if ($rescount == 1)
-            {
-                // FIXME
-                if (is_null($oUser))
-                {
-                    $userentry = ldap_get_entries($ldapconn, $dnsearchres);
-                    $userdn = $userentry[0]["dn"];
-
-                    $oUser = new User;
-                    $oUser->users_name = $username;
-                    $oUser->password = hash('sha256', createPassword());
-                    $oUser->full_name = $userentry[0][$fullname][0];
-                    $oUser->parent_id = 1;
-                    $oUser->email = $userentry[0]["mail"][0];
-
-
-                    if ($oUser->save())
-                    {
-                        if ($this->api->getConfigKey('auth_cas_autocreate_permissions'))
-                        {
-                           $permission = new Permission;
-                           $permission->setPermissions($oUser->uid, 0, 'global', $this->api->getConfigKey('auth_cas_autocreate_permissions'), true);
-                        }
-                        // read again user from newly created entry
-                        $this->setAuthSuccess($oUser);
-                        return;
-                    } else
-                    {
-                        $this->setAuthFailure(self::ERROR_USERNAME_INVALID);
-                        throw new CHttpException(401, 'User not saved : ' . $userentry[0]["mail"][0] . " / " . $userentry[0][$fullname]);
-                        return;
-                    }
-                } else
-                {
-                    // user exist, update database with ldap informations
-                    // update user full_name and user email address
-                    $userentry = ldap_get_entries($ldapconn, $dnsearchres);
-                    $userdn = $userentry[0]["dn"];
-                    $oUser->full_name = $userentry[0][$fullname][0];
-                    $oUser->email = $userentry[0]["mail"][0];
-                    if ($oUser->save())
-                    {
-                        $this->setAuthSuccess($oUser);
-                        return;
-                    } else
-                    {
-                        $this->setAuthFailure(self::ERROR_USERNAME_INVALID);
-                        throw new CHttpException(401, 'User not saved : ' . $userentry[0]["mail"][0] . " / " . $userentry[0][$fullname]);
-                        return;
-                    }
+                if (trim($this->userDetails['full_name']) != trim($oUser->getAttribute('full_name'))) {
+                    $oUser->full_name = $this->userDetails[full_name];
+                    $isChanged = TRUE;
                 }
-            } else
-            {
-                // if no entry or more than one entry returned
-                // then deny authentication
-                $this->setAuthFailure(100, ldap_error($ldapconn));
-                ldap_close($ldapconn); // all done? close connection
-                throw new CHttpException(401, 'No authorized user found for login "' . $username . '"');
-                return;
+                //  }
+
+                if (trim($this->userDetails['email']) != trim($oUser->getAttribute('email'))) {
+                    $oUser->email = $this->userDetails['email'];
+                    $isChanged = TRUE;
+                }
+
+                if ($isChanged) {
+                    if ($oUser->save()) {
+                        $this->setAuthSuccess($oUser);
+                        return;
+                    } else {
+                        $this->setAuthFailure(self::ERROR_USERNAME_INVALID);
+                        throw new CHttpException(401, 'User not saved : ' . $this->userDetails['email'] . " / " . $this->userDetails['full_name']);
+                        return;
+                    }
+                } else {
+                    $this->setAuthSuccess($oUser);
+                    return;
+                }
             }
         }
     }
 
-    public function beforeLogout()
-    {
+    public function beforeLogout() {
         // configure phpCAS
         $cas_host = $this->get('casAuthServer');
         $cas_context = $this->get('casAuthUri');
         $cas_port = (int) $this->get('casAuthPort');
         // import phpCAS lib
-        $basedir=dirname(__FILE__);
+        $basedir = dirname(__FILE__);
         Yii::setPathOfAlias('myplugin', $basedir);
         Yii::import('myplugin.third_party.CAS.*');
         require_once('CAS.php');
